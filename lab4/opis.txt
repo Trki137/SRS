@@ -1,0 +1,109 @@
+=================Pokretanje TELNET naredbe=======================
+Nakon pokretanja naredbe telnet 198.51.100.10 u Wiresharku se pojavio niz telnet i TCP konekcija i slanja podataka.
+Ono što je zanimljivo je da telnet šalje samo 1 karakter odjednom i ono što smo unijeli za login i lozinku se može vidjeti bez problema.
+Pošto se šalje samo 1 karakter da bi vidjeli sve u kompletu, u Wiresharku  imamo mogućnost "Follow TCP Stream" koji će na neki način spojiti to sve te ćemo imati prikaz cijele telnet komunikacije 
+gdje se vidi lozinka i login koji smo upisali kao i odgovor Login incorrect, te nas ponovno pita www login:
+
+====================Pokretanje SSH naredbe=======================
+Ako ponovimo prethodni postupak, samo umjesto telnet koristimo ssh, i otvorimo onaj "Follow TCP Stream" možemo odmah vidjeti važnu i veliku razliku, a to je da se podatci koji se šalju kriptiraju,
+za razliku od telneta koji ih šalje u obliku običnog teksta.
+Kriptiranje se događa pomoću javnog ključa, a u prvih par redaka u Wiresharku možemo vidjeti dolaze do ključeva.
+Klijent daje Client: Key Exchange Init a Server odgovara sličnom porukom Server: Key Exchenge Init.
+Nakon toga slijedi razmjena ključeva pomoću Diffie-Hellmana te nakon te razmjene, počinje slanje kriptiranih podataka.
+Isto vidim da protokol koji je korišten je SSHv2.
+
+====================Konfiguracija vatrozida======================
+Kada pokrenemo FW.sh skriptu i onda na FW pokrenemo naredbu iptables -L dobit ćemo prikaz trenutnih pravila i trenutnog "policy-a".
+Ovaj policy nam je jako bitan jer smo ga postavili na DROP, što znači da ako nam je došao paket za kojeg nema definirano pravilo, onda će on biti odbačen odnosno filtriran.
+
+====================DMZ==========================================
+1.
+	Pošto trebamo pravila za web poslužitelja i za DNS server onda moramo postaviti pravila za ispravne protokole i za ispravne adrese.
+	Protokol HTTP se obavlja preko TCP protokola, dok DNS se može odvit preko TCP-a i UDP-a pa iz tog razloga moramo postaviti sveukupno 3 pravila.
+	I želimo da svima iz Interneta i lokalne mreže može njima pristupiti, onda ne definiramo izvorišnu adresu ali zato definiramo da takvi zahtjevi unutar DMZ-a moraju ići na ip addresu tog www poslužitelja.
+	
+	Naredbe:
+		$IPT -A FORWARD -p tcp -d 198.51.100.10 --dport 80 -j ACCEPT
+		$IPT -A FORWARD -p udp -d 198.51.100.10 --dport 53 -j ACCEPT
+		$IPT -A FORWARD -p tcp -d 198.51.100.10 --dport 53 -j ACCEPT
+	
+	Da bi provjerili ispravnost možemo koristit nmap.
+	Korištenjem naredbe  nmap -n -Pn "-p20-25,53,80,443" 198.51.100.10 na client dobijemo očekivani rezultat, filtrirano je sve osim onoga što je išlo na port 53 i 80 kao što smo i postavili. Ali ovo je samo za TCP.
+	Kako bi provjerili za UDP moramo dodati zastavicu -sU. Te pokretanjem prethodne naredbe sa tom dodatnom zastavicom dobijemo da port 53 je open, što znači da nije filtriran dok za ostale dobivamo open |filtered što koliko sam vidio znači da nije siguran jer ne može to utvrdit iz trenutnog odgovora koji je dobio.
+	Također ako pokrenemo naredbu curl http://www.example.edu/index.html, dobivamo odgovor, odnosno sadržaj jedne html datoteke
+		
+2.
+	Kako bi ograničili samo na lokalnu mrežu moramo dati onda odgovarajuću izvorišnu adresu a to je u ovom slučaju adresa mreže sa maskom -> 10.0.0.20/24
+	Također postavljamo da propušta na port 22,  a on se koristi za SSH protokol te dodajemo da se to može koristit us protokol TCP
+
+	Naredba:
+		$IPT -A FORWARD -s 10.0.0.20/24 -d 198.51.100.10 -p tcp --dport 22 -j ACCEPT
+		
+	Korištenjem naredbe ssh 198.51.100.10 sa klijenta neće proći, dok to probavamo sa PC, koji je u lokalnoj mreži, proći će i tražit će nas lozinku.
+	Isto tako korištenjem naredbe nmap -n -Pn "-p22" 198.51.100.10 na PC dobit ćemo status OPEN dok na računalu client dobivamo status filtered
+
+3.
+	Kako bi mu dopustili pristup DNS-u internetu onda postavimo izvorišnu adresu kao njegovu, a odredišnu adresu kao mrežnu adresu interneta
+	Za pristup database(LAN) s www naredba je dodana nešto niže te će to biti tamo objašnjeno.
+	
+	Naredbe:
+		$IPT -A FORWARD -s 198.51.100.10 -d 203.0.113.1/24 -p tcp --dport 53 -j ACCEPT
+		$IPT -A FORWARD -s 198.51.100.10 -d 203.0.113.1/24 -p udp --dport 53 -j ACCEPT
+		
+	Ako sad pokrenemo naredbu nmap -n -Pn "-p53" 203.0.113.20 sa www dobit ćemo status closed što znači da nije filtriran nego samo nema otvoren DNS poslužitelj, a ako 
+	pokrenemo naredbu nmap -n -Pn "-p53" 10.0.0.20 onda ćemo dobit status filtered što bi i trebali jer PC nije u Internetu nego u lokalnoj mreži.
+
+
+
+4.
+	Ne moramo dodavati nova pravila zbog toga zadane politike koja je postavljena na DROP što znači da će pakete za koje nema pravila automatski filtrirati.
+		
+====================LAN==========================================
+1.
+	Ne moramo ništa dodavati zbog zadane politike, a to možemo provjeriti pokratanjem naredbe nmap -n -Pn "-p22" 10.0.0.100 s client ili www i dobit ćemo status filtered dok pokretanjem na PC ne bi trebali bit problema jer ne prolazi kroz ruter ali za svaki slučaj pokretanjem te naredbe dobivamo open
+	
+2.
+	To smo riješili pod 1.3, odnosno u sljedećoj sekciji će biti napisano pravilo.
+	
+3. 
+	Pomoću zastavice -I i broja poslije FORWARD možemo reći gdje u lancu smjestit pravilo. Pravila se odrađuju slijedno pa je poredak bitan.
+	Kako bi omogućili da database ne može komunicirati s Internetom i DMZ mi smo postavili DROP politiku tamo gdje je izvorišna adresa ip adresa database čvora a dok je odredišna adresa adresa mreže Interneta ili DMZ-a i to za bilo koji protokol i port i to sam stavio da budu iza prvih pravila koji određuju da propuštaju odgovore.
+	Ali kako bi mogao pristupati database sa www dodao sam da mi ispred ovih pravila koji filtriraju, pravilo koje propušta taj 1 slučaj
+	Naredbe:
+		$IPT -I FORWARD 3 -s 10.0.0.100 -d 203.0.113.1/24 -j DROP
+		$IPT -I FORWARD 3 -s 10.0.0.100 -d 198.51.100.1/24 -j DROP
+		$IPT -I FORWARD 3 -s 198.51.100.10 -d 10.0.0.100 -p tcp --dport 10000 -j ACCEPT
+		
+	Pokretanjem naredbe nmap -n -Pn "-p20-25,53,80" 203.0.113.10 s čvora database sve je filtrirano. Isto tako i za druge adrese izvan LAN-a.
+		
+4.
+	Jako jednostavno, samo napišemo izvorišnu adresu, za odredišnu adresu mreže interneta te na kraju koji protokoli i port i to je to za ovaj problem.
+	
+	Naredbe:
+		$IPT -A FORWARD -s 10.0.0.20 -d 203.0.113.1/24 -p tcp --dport 80 -j ACCEPT
+		$IPT -A FORWARD -s 10.0.0.20 -d 203.0.113.1/24 -p tcp --dport 53 -j ACCEPT
+		$IPT -A FORWARD -s 10.0.0.20 -d 203.0.113.1/24 -p udp --dport 53 -j ACCEPT
+		
+		Pokretanjem naredbe nmap -n -Pn "-p20-25,53,80" 203.0.113.20 dobivamo status closed za portove 53 i 80 što je i za očekivati jer tamo nema pokrenut DNS niti web poslužitelj, a ostali imaju status filtered.
+		Ako to isto pokrenemo ali sa ip adresom servera onda dobijemo status closed za DNS i open za http i ssh(što je do zadnjeg zadatka), a ostalo filtered
+		
+5. 
+	Ne moramo ništa mijenjati zbog zadane politike
+	
+	
+====================FW===========================================
+1.
+	Dodajemo samo pravilo koje omogućuje da PC se spoji sa SSH a to omogućujemo da na lanac INPUT stavimo pravilo s izvorišnom adresom PC-a i odgovarajućim protokolom i portom.
+	Naredbe:
+		$IPT -A INPUT -s 10.0.0.20 -p tcp --dport 22 -j ACCEPT
+		
+	Pokretanjem  nmap -n -Pn "-p20-25,53,80" 10.0.0.1 na PC dobijemo samo da port 22 ima status open, ostali imaju filtered.
+		
+2.	
+	Ne moramo ništa dodatno podeđšavati zbog zadane politike koja je DROP.
+====================Internet=====================================
+1.
+
+	Dodajem ovo pravilo na 7 poziciju kako bi očuvao da database ne može ničemu pristupit u DMZ-u i Internetu
+	Naredba:
+		$IPT -I FORWARD 7 -d 203.0.113.10 -p tcp --dport 22 -j ACCEPT

